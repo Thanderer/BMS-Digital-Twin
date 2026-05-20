@@ -67,6 +67,7 @@ namespace SafeCharge
         private float   _requestedCurrentC;
         private float[] _cellFadeRate;
         private float   _ahThroughput;
+        private bool    _scenarioLocked;   // true while a manual scenario (WornPack) is active
 
         // Derived properties
         public float SOH_pack
@@ -163,18 +164,21 @@ namespace SafeCharge
                 OnCycleCountChanged?.Invoke(CycleCount);
             }
 
-            // Per-cell SOH degradation
+            // Per-cell SOH degradation (skipped when a manual scenario is locked in)
             bool sohDirty = false;
-            for (int i = 0; i < cellSOH.Length; i++)
+            if (!_scenarioLocked)
             {
-                float degraded = Mathf.Max(0.50f, 1f - _cellFadeRate[i] * CycleCount);
-                if (!Mathf.Approximately(cellSOH[i], degraded))
+                for (int i = 0; i < cellSOH.Length; i++)
                 {
-                    cellSOH[i] = degraded;
-                    sohDirty   = true;
+                    float degraded = Mathf.Max(0.50f, 1f - _cellFadeRate[i] * CycleCount);
+                    if (!Mathf.Approximately(cellSOH[i], degraded))
+                    {
+                        cellSOH[i] = degraded;
+                        sohDirty   = true;
+                    }
                 }
+                if (sohDirty) OnSohChanged?.Invoke((float[])cellSOH.Clone());
             }
-            if (sohDirty) OnSohChanged?.Invoke((float[])cellSOH.Clone());
 
             // Charge-complete auto-stop.
             // Use ChargeStopSoc (0.999) instead of 1.0 so the stop fires when
@@ -288,6 +292,7 @@ namespace SafeCharge
 
         public void ApplyAgedScenario(int weakIdx, float weakSoh, float averageSoh)
         {
+            _scenarioLocked = true;   // freeze degradation loop so it doesn't overwrite these values
             for (int i = 0; i < cellSOH.Length; i++)
                 cellSOH[i] = (i == weakIdx) ? weakSoh : averageSoh;
             OnSohChanged?.Invoke((float[])cellSOH.Clone());
@@ -300,6 +305,7 @@ namespace SafeCharge
         /// current, or cycle count.</summary>
         public void ResetToFreshPack()
         {
+            _scenarioLocked = false;
             if (cellSOH == null) return;
             for (int i = 0; i < cellSOH.Length; i++) cellSOH[i] = 1f;
             bool wasCooling = CoolingActive;
@@ -314,6 +320,7 @@ namespace SafeCharge
         /// SOH, SOC, temperature, and slider are all untouched.</summary>
         public void ResetCycleCount()
         {
+            _scenarioLocked = false;
             _ahThroughput = 0f;
             CycleCount    = 0f;
             OnCycleCountChanged?.Invoke(CycleCount);
@@ -323,6 +330,7 @@ namespace SafeCharge
         /// everything back to initial values.</summary>
         public void ResetSimulation()
         {
+            _scenarioLocked = false;
             bool wasCooling = CoolingActive;
 
             SOC_displayed      = Mathf.Clamp01(initialSOC);
